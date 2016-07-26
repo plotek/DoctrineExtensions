@@ -2,6 +2,7 @@
 
 namespace Gedmo\Loggable\Mapping\Driver;
 
+use Doctrine\Common\Persistence\Mapping\ClassMetadata;
 use Gedmo\Mapping\Driver\Xml as BaseXml;
 use Gedmo\Exception\InvalidMappingException;
 
@@ -61,17 +62,28 @@ class Xml extends BaseXml
             $this->inspectElementForVersioned($xmlDoctrine->{'reference-one'}, $config, $meta);
         }
         if (isset($xmlDoctrine->{'embedded'})) {
-            $this->inspectElementForVersioned($xmlDoctrine->{'embedded'}, $config, $meta);
+            $this->inspectEmbeddedForVersioned($xmlDoctrine->{'embedded'}, $config, $meta);
         }
 
         if (!$meta->isMappedSuperclass && $config) {
             if (is_array($meta->identifier) && count($meta->identifier) > 1) {
                 throw new InvalidMappingException("Loggable does not support composite identifiers in class - {$meta->name}");
             }
-            if (isset($config['versioned']) && !isset($config['loggable'])) {
+            if ($this->isClassAnnotationInValid($meta, $config)) {
                 throw new InvalidMappingException("Class must be annotated with Loggable annotation in order to track versioned fields in class - {$meta->name}");
             }
         }
+    }
+
+    /**
+     * @param ClassMetadata $meta
+     * @param array         $config
+     *
+     * @return bool
+     */
+    protected function isClassAnnotationInValid(ClassMetadata $meta, array &$config)
+    {
+        return isset($config['versioned']) && !isset($config['loggable']) && (!isset($meta->isEmbeddedClass) || !$meta->isEmbeddedClass);
     }
 
     /**
@@ -98,6 +110,51 @@ class Xml extends BaseXml
                     throw new InvalidMappingException("Cannot version [{$field}] as it is not the owning side in object - {$meta->name}");
                 }
                 $config['versioned'][] = $field;
+            }
+        }
+    }
+
+    /**
+     * Searches properties of embedded object for versioned fields
+     *
+     * @param string $field
+     * @param array $config
+     * @param \Doctrine\ORM\Mapping\ClassMetadata $meta
+     */
+    private function inspectEmbeddedForVersioned(\SimpleXMLElement $element, array &$config, \Doctrine\ORM\Mapping\ClassMetadata $meta)
+    {
+        foreach ($element as $mapping) {
+            $mappingDoctrine = $mapping;
+            /**
+             * @var \SimpleXmlElement $mapping
+             */
+            $mapping = $mapping->children(self::GEDMO_NAMESPACE_URI);
+
+            if (isset($mapping->versioned)) {
+                if (!$this->_isAttributeSet($mappingDoctrine, 'class')) {
+                    throw new InvalidMappingException("Embedded must set class attribute");
+                }
+
+                $class = $this->_getAttribute($mappingDoctrine, 'class');
+                $field = $this->_getAttribute($mappingDoctrine, 'name');
+
+                $xml = $this->_getMapping($class);
+
+                if (isset($xml->field)) {
+                    foreach ($xml->field as $embeddabledMapping) {
+                        $embeddableMappingDoctrine = $embeddabledMapping;
+                        /**
+                         * @var \SimpleXmlElement $mapping
+                         */
+                        $embeddabledMapping = $embeddabledMapping->children(self::GEDMO_NAMESPACE_URI);
+
+                        $embeddableField = $this->_getAttribute($embeddableMappingDoctrine, 'name');
+
+                        if (isset($embeddabledMapping->versioned)) {
+                            $config['versioned'][] = $field . '.' . $embeddableField;
+                        }
+                    }
+                }
             }
         }
     }
